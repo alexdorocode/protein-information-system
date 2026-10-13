@@ -320,12 +320,16 @@ else
 fi
 
 # Verification
-echo "🔎 Checking connectivity..."
-sleep 5  # Give containers more time to start
+echo "🔎 Checking connectivity and service readiness..."
+sleep 2
 
-# PostgreSQL connectivity check
+# PostgreSQL connectivity and readiness check
 if nc -z localhost 5432; then
-  echo "✅ PostgreSQL reachable."
+  if docker exec pgvectorsql pg_isready -U usuario -d BioData >/dev/null 2>&1; then
+    echo "✅ PostgreSQL reachable and accepting connections."
+  else
+    echo "⚠️  PostgreSQL port 5432 open, but database is not ready yet."
+  fi
 else
   echo "❌ PostgreSQL unreachable."
   echo "🔧 Diagnostics:"
@@ -333,9 +337,13 @@ else
   docker logs --tail 10 pgvectorsql 2>/dev/null || echo "   No logs available"
 fi
 
-# RabbitMQ connectivity check
+# RabbitMQ connectivity and readiness check
 if nc -z localhost 5672; then
-  echo "✅ RabbitMQ reachable."
+  if docker exec rabbitmq rabbitmq-diagnostics check_running >/dev/null 2>&1; then
+    echo "✅ RabbitMQ reachable and running."
+  else
+    echo "⚠️  RabbitMQ port 5672 open, but broker is not ready yet."
+  fi
 else
   echo "❌ RabbitMQ unreachable."
   echo "🔧 Diagnostics:"
@@ -344,11 +352,11 @@ else
 fi
 
 # Additional health checks
-echo "🏥 Container health status:"
+echo "🏥 Container status:"
 for container in pgvectorsql rabbitmq; do
   if docker ps --format "{{.Names}}" | grep -q "^${container}$"; then
-    status=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "no-healthcheck")
-    echo "   $container: running (health: $status)"
+    status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "unknown")
+    echo "   $container: $status"
   else
     echo "   $container: not running"
   fi
@@ -607,126 +615,74 @@ diagnose_poetry_issues() {
   fi
 }
 
-# Function to fix Poetry environment issues
-fix_poetry_environment() {
-  echo "🔧 Attempting to fix Poetry environment..."
+# Function to diagnose Poetry issues
+diagnose_poetry_issues() {
+  echo "🔍 Diagnosing Poetry environment issues..."
   
-  # Remove existing environment if corrupted
+  # Check Python version
+  local python_version=$(python3 --version 2>&1 || echo "Python not found")
+  echo "   🐍 Python version: $python_version"
+  
+  # Check Poetry environment
+  local poetry_env=$(poetry env info --path 2>/dev/null || echo "No environment")
+  echo "   📁 Poetry environment: $poetry_env"
+  
+  # Check if virtual environment exists and is accessible
   if poetry env info >/dev/null 2>&1; then
-    echo "   🗑️  Removing existing Poetry environment..."
-    poetry env remove --all 2>/dev/null || true
+    local env_python=$(poetry env info --executable 2>/dev/null || echo "Not accessible")
+    echo "   🔧 Environment Python: $env_python"
   fi
   
-  # Clear Poetry cache
-  echo "   🧹 Clearing Poetry cache..."
-  poetry cache clear --all . 2>/dev/null || true
-  
-  # Remove lock file if it exists and is problematic
-  if [ -f "poetry.lock" ] && ! poetry check --lock >/dev/null 2>&1; then
-    echo "   🗑️  Removing corrupted poetry.lock..."
-    rm -f poetry.lock
-  fi
-  
-  # Check for specific dependency conflicts
-  if grep -q "posixpath.*ALLOW_MISSING" ~/.cache/pypoetry/artifacts/*/*.log 2>/dev/null || \
-     grep -q "posixpath.*ALLOW_MISSING" /tmp/*.log 2>/dev/null; then
-    echo "   🔍 Detected posixpath ALLOW_MISSING error - updating Poetry..."
-    # This is often caused by outdated setuptools/poetry
-    python3 -m pip install --user --upgrade pip setuptools poetry
-  fi
-  
-  # Create fresh environment with specific Python version
-  echo "   🆕 Creating fresh Poetry environment..."
-  poetry env use python3
-  
-  # Update pip, setuptools, wheel in the new environment
-  echo "   📦 Updating core packages..."
-  poetry run python -m pip install --upgrade pip setuptools wheel
-}
-
-# Function to install dependencies with multiple strategies
-install_dependencies_robust() {
-  local attempt=1
-  local max_attempts=4
-  
-  while [ $attempt -le $max_attempts ]; do
-    echo "   📥 Dependency installation attempt $attempt/$max_attempts..."
-    
-    if [ $attempt -eq 1 ]; then
-      # First attempt: normal install
-      if poetry install --no-interaction; then
-        echo "✅ Dependencies installed successfully."
-        return 0
-      fi
-    elif [ $attempt -eq 2 ]; then
-      # Second attempt: update lock file and try again
-      echo "   🔄 Updating lock file and retrying..."
-      rm -f poetry.lock 2>/dev/null || true
-      if poetry lock && poetry install --no-interaction; then
-        echo "✅ Dependencies installed successfully."
-        return 0
-      fi
-    elif [ $attempt -eq 3 ]; then
-      # Third attempt: verbose install to see what's failing
-      echo "   🔍 Verbose installation to identify issues..."
-      if poetry install --no-interaction -vvv; then
-        echo "✅ Dependencies installed successfully."
-        return 0
-      fi
-    else
-      # Fourth attempt: install without dev dependencies
-      echo "   🎯 Installing only production dependencies..."
-      if poetry install --no-interaction --only main; then
-        echo "✅ Production dependencies installed successfully."
-        echo "⚠️  Note: Development dependencies were skipped."
-        return 0
-      fi
+  # Check for lock file issues
+  if [ -f "poetry.lock" ]; then
+    echo "   📋 poetry.lock exists"
+    if ! poetry check --lock >/dev/null 2>&1; then
+      echo "   ⚠️  poetry.lock is out of sync with pyproject.toml"
     fi
-    
-    if [ $attempt -lt $max_attempts ]; then
-      echo "   ❌ Attempt $attempt failed. Trying fixes..."
-      
-      # Check for specific error patterns and apply targeted fixes
-      if [ $attempt -eq 1 ]; then
-        # After first failure, try updating Poetry itself
-        echo "   🔧 Updating Poetry and core tools..."
-        python3 -m pip install --user --upgrade poetry
-      fi
-      
-      fix_poetry_environment
-    fi
-    
-    ((attempt++))
-  done
-  
-  echo "❌ All dependency installation attempts failed."
-  return 1
+  else
+    echo "   📋 No poetry.lock file found"
+  fi
 }
 
 echo "⚙️  Ensuring Poetry environment and dependencies..."
 
-# Set up Python environment
-poetry env use python3 >/dev/null 2>&1 || {
-  echo "⚠️  Failed to set Python environment. Trying diagnostics..."
-  diagnose_poetry_issues
-  fix_poetry_environment
-}
+# Resolve active Python interpreter (honor pyenv Python 3.12 if present)
+PYTHON_BIN="python3"
+if command -v pyenv >/dev/null 2>&1; then
+  PYENV_PYTHON=$(pyenv which python3 2>/dev/null || true)
+  if [ -n "$PYENV_PYTHON" ] && [ -x "$PYENV_PYTHON" ]; then
+    PYTHON_BIN="$PYENV_PYTHON"
+  fi
+fi
 
-# Install dependencies with robust error handling
-if ! install_dependencies_robust; then
-  echo ""
-  echo "❌ Poetry dependency installation failed after multiple attempts."
-  echo ""
-  echo "🔧 Manual troubleshooting steps:"
-  echo "   1. Check Python version compatibility in pyproject.toml"
-  echo "   2. Try: poetry update"
-  echo "   3. Try: poetry install --no-dev"
-  echo "   4. Check for conflicting system packages"
-  echo "   5. Consider using: poetry install --no-cache"
-  echo ""
+if ! poetry env use "$PYTHON_BIN"; then
+  echo "❌ Failed to select Python interpreter ($PYTHON_BIN) for Poetry."
   diagnose_poetry_issues
   exit 1
 fi
+
+# Verify lockfile consistency deterministically
+if [ ! -f "poetry.lock" ]; then
+  echo "❌ poetry.lock not found. Run 'poetry lock' manually to generate it."
+  exit 1
+fi
+
+if ! poetry check --lock; then
+  echo ""
+  echo "❌ pyproject.toml and poetry.lock are out of sync."
+  echo "   Run 'poetry lock' manually to update the lock file, then rerun this script."
+  exit 1
+fi
+
+# Install dependencies deterministically
+echo "📥 Installing dependencies from lock file..."
+if ! poetry install --no-interaction; then
+  echo ""
+  echo "❌ Poetry dependency installation failed."
+  diagnose_poetry_issues
+  exit 1
+fi
+echo "✅ Dependencies installed successfully."
 
 # --- Run the initialization ---
 echo "🚀 Starting PIS initialization via Poetry..."
