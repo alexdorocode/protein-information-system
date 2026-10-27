@@ -121,3 +121,4 @@ cython_debug/
 # Others
 .idea/
 poetry.lock
+.input_data/

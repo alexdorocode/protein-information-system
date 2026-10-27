@@ -58,10 +58,10 @@ tag: 'METAMORPH' # Identifier tag for accession loading.
 
 # 📗 Load from CSV.
 # Path to the CSV file containing accessions.
-load_accesion_csv: ../data/pruebasGO_Termns.csv
+load_accesion_csv: /home/alexdoro/repositories/protein-information-system/.input_data/mfp_catalog_mvp/mfp_proteins.csv
 
 # Column name in the CSV file.
-load_accesion_column: id
+load_accesion_column: canonical_uniprot_accession
 
 # 🔬 Fetch from the UniProt API.
 # Query string for UniProt search.
