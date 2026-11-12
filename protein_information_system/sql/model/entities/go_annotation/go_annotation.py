@@ -3,13 +3,17 @@ from sqlalchemy.orm import relationship
 
 from protein_information_system.sql.model.core.base import Base
 
-""" 
+"""
 
-Se ha modificado la clase para incluir el atributo publication en la tabla. 
-Asimismo, se ha ajustado la definición de protein_id y go_id para que no formen 
-parte de la clave primaria, evitando así la creación de una clave primaria 
-compuesta (id + protein_id + go_id) que impediría registrar distintos códigos 
-de evidencia para un mismo GO term.   
+Se ha modificado la clase para incluir el atributo publication en la tabla.
+Asimismo, se ha ajustado la definición de protein_id y go_id para que no formen
+parte de la clave primaria, evitando así la creación de una clave primaria
+compuesta (id + protein_id + go_id) que impediría registrar distintos códigos
+de evidencia para un mismo GO term.
+
+El atributo publication_id almacena el identificador de la referencia que
+respalda la anotación: números PubMed como cadenas simples (e.g. '30514107')
+o identificadores GO_REF con prefijo canónico (e.g. 'GO_REF:0000024').
 
 """
 
@@ -42,6 +46,8 @@ class ProteinGOTermAnnotation(Base):
         nullable=False,
     )
 
+    # Stores reference identifiers: numeric string for PubMed (e.g. '30514107')
+    # or canonical prefixed CURIE for GO_REF (e.g. 'GO_REF:0000024').
     publication_id = Column(
         String,
         nullable=True,

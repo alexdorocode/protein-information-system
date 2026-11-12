@@ -23,7 +23,8 @@ class QuickGOAnnotationExtractor(QueueTaskInitializer):
     - GO term name.
     - GO aspect/category.
     - GO evidence code, such as EXP, IDA or IEA.
-    - Supporting PubMed identifier, when available.
+    - Supporting reference identifier (PubMed ID or GO_REF),
+      when available.
 
     Accessions must already exist and be linked to proteins before
     executing this extractor.
@@ -449,11 +450,17 @@ class QuickGOAnnotationExtractor(QueueTaskInitializer):
 
         reference = str(reference).strip()
 
-        if not reference.upper().startswith("PMID:"):
-            return None
+        if reference.upper().startswith("PMID:"):
+            publication_id = reference.split(":", maxsplit=1)[1].strip()
+            return publication_id or None
 
-        publication_id = reference.split(":", maxsplit=1)[1].strip()
-        return publication_id or None
+        if reference.upper().startswith("GO_REF:"):
+            ref_id = reference.split(":", maxsplit=1)[1].strip()
+            if not (ref_id.isdigit() and len(ref_id) == 7):
+                return None
+            return f"GO_REF:{ref_id}"
+
+        return None
 
     @staticmethod
     def _normalize_accession(accession_code: str) -> str:
